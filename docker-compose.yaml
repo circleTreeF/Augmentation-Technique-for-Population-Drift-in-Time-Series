@@ -1,0 +1,40 @@
+services:
+  db:
+    image: 'postgres:13'
+    environment:
+      - TZ=Asia/Shanghai
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    ports:
+      - '18888:22'
+      - '28888:5432'
+    volumes:
+      - ./data/db:/var/lib/postgresql/data
+    container_name: pytorch-fyp-db-fyzr
+
+  ml:
+    image: 'pytorch/pytorch:1.9.0-cuda10.2-cudnn7-devel'
+    tty: true
+    stdin_open: true
+    runtime: nvidia
+    environment:
+        - NVIDIA_VISIBLE_DEVICES=all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [ gpu ]
+              count: all
+              driver: 'nvidia'
+    container_name: pytorch-fyp-ml-fyzr
+    build:
+      context: .
+      shm_size: '16gb'
+    volumes:
+      - .:/workspace/FYP/codespace
+    ports:
+      - '8888:22'
+    depends_on:
+      - db
