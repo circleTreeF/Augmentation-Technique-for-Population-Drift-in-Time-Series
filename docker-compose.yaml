@@ -20,7 +20,8 @@ services:
     stdin_open: true
     runtime: nvidia
     environment:
-        - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_VISIBLE_DEVICES=all
+      - TZ=Asia/Shanghai
     deploy:
       resources:
         reservations:
@@ -31,9 +32,9 @@ services:
     container_name: pytorch-fyp-ml-fyzr
     build:
       context: .
-      shm_size: '16gb'
+      shm_size: '32gb'
     volumes:
-      - .:/workspace/FYP/codespace
+      - .:/workspace/
     ports:
       - '8888:22'
     depends_on:

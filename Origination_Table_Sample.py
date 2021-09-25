@@ -2,12 +2,15 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base
 from sqlalchemy import Column, Integer, String, Float, Date, Numeric
 from sqlalchemy import ForeignKey
+
 Base = declarative_base()
 # engine = create_engine('postgresql://postgres:postgres@db', echo=True, future=True)
 
 '''
 The table object for the origination data
 '''
+
+
 class OriginationDataSample(Base):
     __tablename__ = 'origination_data_sample'
 
@@ -16,20 +19,20 @@ class OriginationDataSample(Base):
     first_time_homebuyer_flag = Column(String(1))
     maturity_date = Column(Numeric(6))
     msa = Column(Numeric(5))
-    mortgage_insurance_percentage = Column(Float)
+    mortgage_insurance_percentage = Column(Numeric(3))
     number_of_units = Column(Numeric(2))
     occupancy_status = Column(String(1))
-    original_CLTV = Column(Float)
-    original_RTI_ratio = Column(Float)
-    original_UPB = Column(Integer)
-    original_LTV = Column(Float)
+    original_CLTV = Column(Numeric(3))
+    original_RTI_ratio = Column(Numeric(3))
+    original_UPB = Column(Numeric(12))
+    original_LTV = Column(Numeric(3))
     original_interest_rate = Column(Float)
     channel = Column(String(1))
     ppm_flag = Column(String(1))
-    amortization_type = Column(String(1))
-    property_state = Column(String(1))
-    property_type = Column(String(1))
-    postal_code = Column(Numeric)
+    amortization_type = Column(String(5))
+    property_state = Column(String(2))
+    property_type = Column(String(2))
+    postal_code = Column(Numeric(5))
     loan_sequence_number = Column(String(12), primary_key=True)
     loan_purpose = Column(String(1))
     original_loan_term = Column(Numeric(3))
@@ -42,4 +45,4 @@ class OriginationDataSample(Base):
     harp_indicator = Column(String(1))
     property_valuation_method = Column(Numeric(1))
     interest_only_indicator = Column(String(1))
-    year=Column(Numeric(4))
+    year = Column(Numeric(4))

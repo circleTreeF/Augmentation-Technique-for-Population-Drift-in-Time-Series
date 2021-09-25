@@ -12,11 +12,12 @@ def long_time_task(name, arg2):
 
 if __name__ == '__main__':
     print('Parent process %s.' % os.getpid())
-    p = Pool(4)
-    arg_list = [10, 20, 30, 40, 50]
-    for i in range(5):
-        p.apply_async(long_time_task, args=(i, arg_list[i]))
-    print('Waiting for all subprocesses done...')
-    p.close()
-    p.join()
-    print('All subprocesses done.')
+    # p = Pool(4)
+    with Pool(4) as p:
+        arg_list = [10, 20, 30, 40, 50]
+        for i in range(5):
+            p.apply_async(long_time_task, args=(i, arg_list[i]))
+        print('Waiting for all subprocesses done...')
+        p.close()
+        p.join()
+        print('All subprocesses done.')
