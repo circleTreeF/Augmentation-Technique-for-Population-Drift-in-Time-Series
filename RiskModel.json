@@ -1,0 +1,5 @@
+{
+  "non_default_loans_select_ratio": 0.01,
+  "max_depth": 8,
+  "n_estimators": 10
+}
