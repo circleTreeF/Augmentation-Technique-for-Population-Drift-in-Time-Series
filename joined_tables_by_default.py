@@ -1,12 +1,11 @@
-from sqlalchemy import Column, Integer, String, Float, Numeric
+from sqlalchemy import Column, Integer, String, Float, Numeric, Boolean
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
 
 
-
-class OriginationData(Base):
-    __tablename__ = 'origination_data_with_quarter'
+class OriginationDataWithDefault(Base):
+    __tablename__ = 'origination_data_with_default'
 
     credit_score = Column(Integer)
     first_payment_date = Column(Numeric(6))
@@ -39,5 +38,6 @@ class OriginationData(Base):
     harp_indicator = Column(String(1))
     property_valuation_method = Column(Numeric(1))
     interest_only_indicator = Column(String(1))
-    year=Column(Numeric(4))
-    quarter=Column(Numeric(1))
+    default = Column(Boolean, default=False)
+    year = Column(Numeric(4))
+    quarter = Column(Numeric(1))
