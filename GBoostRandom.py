@@ -72,9 +72,7 @@ def loans_split(input_loans_x, input_loans_y):
     return (x_train, y_train), (x_test, y_test)
 
 
-def preprocessing(loans_data):
-    rng = np.random.default_rng()
-    # rng.shuffle(loans_data)
+def db_class_to_array(loans_data):
     gc.collect()
     with closing(mp.Pool(num_processor)) as p:
         loans_data_list = p.map(pre.individual_x_y, loans_data)
@@ -84,10 +82,16 @@ def preprocessing(loans_data):
     print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
         "%Y-%m-%d %H:%M:%S") + " Queried Data Formatted")
     loans_data_array = np.array(loans_data_list)
+    return loans_data_array
+
+
+def preprocessing(loans_data_array):
+    rng = np.random.default_rng(42)
+
     non_default_loans = loans_data_array[loans_data_array[:, 19] == False]
     default_loans = loans_data_array[loans_data_array[:, 19] == True]
     random_non_default_index = rng.choice(len(non_default_loans),
-                                          int(len(non_default_loans) * risk_dict['non_default_loans_select_ratio']))
+                                          int(len(non_default_loans) * risk_dict['non_default_loans_select_ratio_train']))
     random_non_default = non_default_loans[random_non_default_index]
     balanced_loans = np.concatenate((default_loans, random_non_default))
     rng.shuffle(balanced_loans)
@@ -163,94 +167,16 @@ if __name__ == '__main__':
     # pca_machine= PCA(n_components=)
     with Session(engine) as session:
         train_loans = get_loan_by_year(session, train_year)
+        training_year_loans_array = db_class_to_array(train_loans)
+
         test_loans = get_loan_by_year(session, test_year)
-        # X_train, y_train = preprocessing(train_loans)
-        # X_test, y_test = preprocessing(test_loans)
-        # train_set, test_set = loans_split(X, y)
-        # density, density_estimate = aug.distribution_modifier(X_test)
-        # # PDF calculation with kernel density method 1
-        # # pdf_test = density.pdf()
-        # # pdf_train = density.pdf(aug.distribution_normalization(X_train))
-        # # PDF calculation with kernel density method 2
-        # pdf_test_v2 = density_estimate.evaluate(aug.distribution_normalization(X_test))
-        # pdf_train_v2 = density_estimate.evaluate(aug.distribution_normalization(X_train))
-        # utility.save_density_with_bandwidth(dens_out_path, pdf_train_v2, 1)
-        # # n_estimators=risk_dict['n_estimators'], random_state=risk_dict['random_state'],
-        # #                        max_depth=risk_dict['max_depth'], min_samples_leaf=risk_dict['min_samples_leaf']
-        # """
-        # Prepare the data and weight in txt file
-        # """
-        # # current_cache_prefix_time_date = datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
-        # #     "%Y-%m-%d %H:%M:%S")
-        # # current_cache_path = 'cache/data/' + current_cache_prefix_time_date + '/'
-        # # os.mkdir(current_cache_path)
-        # # GBM.ndarray_to_cache(current_cache_path, '-train-x-', year=2004, array=train_set[0])
-        # # GBM.ndarray_to_cache(current_cache_path, '-train-y-', year=2004, array=train_set[1])
-        # # GBM.ndarray_to_cache(current_cache_path, '-train--', year=2004, array=train_set[1])
-        #
-        # weight = pdf_train_v2.shape[0] * pdf_train_v2 / np.sum(pdf_train_v2)
-        #
-        # gbm_aug = GBM.GBM()
-        # gbm = GBM.GBM()
-        # gbm_aug.train((X_train, y_train), weight)
-        # gbm.train((X_train, y_train))
-        #
-        # # prediction result evaluation
-        # y_test_prob_aug = gbm_aug.classifier_machine.predict_proba(X_test,
-        #                                                            num_iteration=gbm_aug.classifier_machine.best_iteration_)
-        # current_aug_auc = metrics.roc_auc_score(y_test, y_test_prob_aug[:, 1])
-        # aug_auc.append(current_aug_auc)
-        #
-        # y_test_predict = gbm_aug.classifier_machine.predict(X_test,
-        #                                                     num_iteration=gbm_aug.classifier_machine.best_iteration_)
-        # accuracy = accuracy_score(y_test, y_test_predict)
-        #
-        # # test the original gbm without augmentation
-        # y_test_prob_original = gbm.classifier_machine.predict_proba(X_test,
-        #                                                             num_iteration=gbm_aug.classifier_machine.best_iteration_)
-        # current_auc_original = metrics.roc_auc_score(y_test, y_test_prob_original[:, 1])
-        # all_years_auc.append(current_auc_original)
-        #
-        # selected_test_loan_numbers.append(X_test.shape[0])
-        # selected_train_loan_numbers.append(X_train.shape[0])
-        # # clf = GBClassifier(max_depth=risk_dict['max_depth'], n_estimators=risk_dict['n_estimators'])
-        # # clf.fit(train_set[0], train_set[1])
-        # # print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
-        # #     "%Y-%m-%d %H:%M:%S") + " Gradient Boosting Model Trained")
-        # # predict_clf = clf.predict(X_test)
-        # # auc = evaluate(clf, X_test, y_test)
-        # # all_years_auc.append(auc)
-        # # print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
-        # #     "%Y-%m-%d %H:%M:%S") + "Model Evaluated for 2006")
-        # # score = clf.score(X_test, y_test)
-        # # all_years_score.append(score)
-        # x_default_test = X_test[y_test == 1]
-        # y_default_test = y_test[y_test == 1]
-        # default_number = len(y_default_test)
-        # selected_test_default_numbers.append(default_number)
-        # y_default_train = y_train[y_train == 1]
-        # selected_train_default_numbers.append(len(y_default_train))
-        #
-        # bandwidth_dict.append(1)
-        # # if default_number > 0:
-        # #     default_score = clf.score(x_default_test, y_default_test)
-        # # else:
-        # #     default_score = None
-        # # default_years_score.append(default_score)
-        # train_ratio = 0.7
-        # with mp.Pool(num_processor) as p:
-        #     test_roc, test_default_score, test_default_number = zip(
-        #         *p.starmap(test, zip(list(range(2007, 2021)), repeat(clf))))
-        # all_years_roc.extend(test_roc)
-        # default_years_score.extend(test_default_score)
-        # default_numbers.extend(test_default_number)
-        for bandwidth in np.arange(0.3, 0.511, 0.001):
-            # loans = get_loan_by_year(year)
-            # X, y = preprocessing(loans)
+        testing_year_loans_array = db_class_to_array(test_loans)
+
+        for bandwidth in np.arange(0.3, 0.602, 0.002):
+
             gc.collect()
-            X_train, y_train = preprocessing(train_loans)
-            X_test, y_test = preprocessing(test_loans)
-            # train_set, test_set = loans_split(X, y)
+            X_train, y_train = preprocessing(training_year_loans_array)
+            X_test, y_test = preprocessing(testing_year_loans_array)
             """
             augmentation
             """
@@ -275,8 +201,7 @@ if __name__ == '__main__':
             current_aug_auc = metrics.roc_auc_score(y_test, y_test_prob_aug[:, 1])
             aug_auc.append(current_aug_auc)
 
-            # predict_clf = clf.predict(X_test)
-            # auc = evaluate(clf, X_test, y_test)
+
             y_test_prob_original = gbm.classifier_machine.predict_proba(X_test,
                                                                         num_iteration=gbm.classifier_machine.best_iteration_)
             current_auc_original = metrics.roc_auc_score(y_test, y_test_prob_original[:, 1])
@@ -284,8 +209,7 @@ if __name__ == '__main__':
             print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
                 "%Y-%m-%d %H:%M:%S") + "Model Evaluated for bandwidth " + str(bandwidth))
 
-            # score = clf.score(X_test, y_test)
-            # all_years_score.append(score)
+
 
             selected_test_loan_numbers.append(X_test.shape[0])
             selected_train_loan_numbers.append(X_train.shape[0])
@@ -295,11 +219,6 @@ if __name__ == '__main__':
             default_number = len(y_default_test)
             y_default_train = y_train[y_train == 1]
             selected_train_default_numbers.append(len(y_default_train))
-            # if default_number > 0:
-            #     default_score = clf.score(x_default_test, y_default_test)
-            # else:
-            #     default_score = None
-            # default_years_score.append(default_score)
             selected_test_default_numbers.append(default_number)
             bandwidth_dict.append(bandwidth)
 
