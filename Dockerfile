@@ -1,4 +1,4 @@
-FROM pytorch/pytorch:1.9.0-cuda10.2-cudnn7-devel
+FROM circletree/fyp-ml-fyzr:03-18-2021
 RUN apt update -y
 RUN apt upgrade -y
 RUN apt install vim openssh-server -y

@@ -1,6 +1,6 @@
 services:
   db:
-    image: 'postgres:13'
+    image: 'circletree/fyp-db-fyzr:12-17-2021'
     environment:
       - TZ=Asia/Shanghai
       - POSTGRES_DB=postgres
@@ -11,11 +11,11 @@ services:
       - '18888:22'
       - '28888:5432'
     volumes:
-      - ./data/db:/var/lib/postgresql/data
+      - /data/FYZR/FYP/db:/var/lib/postgresql/data
     container_name: pytorch-fyp-db-fyzr
 
   ml:
-    image: 'pytorch/pytorch:1.9.0-cuda10.2-cudnn7-devel'
+    image: 'circletree/fyp-ml-fyzr:03-18-2022'
     tty: true
     stdin_open: true
     runtime: nvidia
@@ -29,12 +29,14 @@ services:
             - capabilities: [ gpu ]
               count: all
               driver: 'nvidia'
+        limits:
+          memory: 106G
     container_name: pytorch-fyp-ml-fyzr
     build:
       context: .
-      shm_size: '32gb'
+      shm_size: '128gb'
     volumes:
-      - .:/workspace/
+      - /data/FYZR/FYP/codespace/FYP/codespace:/workspace/FYP/codespace
     ports:
       - '8888:22'
     depends_on:
