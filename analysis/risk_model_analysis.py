@@ -20,5 +20,23 @@ def random_model_aggregate():
     plt.ylabel("AUC")
     plt.show()
 
+def basemodel_tuning(dir):
+    auc_list = []
+    x = list(range(2006, 2021))
+    num = 0
+    for file in os.listdir(dir):
+        f = open(dir + file, 'rb')
+        result = pickle.load(f)
+        auc_list.append(result['all year AUC'])
+        plt.plot(x, result['all year AUC'])
+        num = num + 1
+        print(file)
+        if num==3:
+            break
+    plt.title("AUC of Gradient Boosting - " + str(num) + " Times")
+    plt.xlabel("Year")
+    plt.ylabel("AUC")
+    plt.show()
+
 if __name__ == '__main__':
     random_model_aggregate()
