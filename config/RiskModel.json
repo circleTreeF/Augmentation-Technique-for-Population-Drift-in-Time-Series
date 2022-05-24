@@ -1,0 +1,7 @@
+{
+  "non_default_loans_select_ratio_train": 0.01,
+  "non_default_loans_select_ratio_test": 0.02,
+  "non_default_loans_select_ratio": 0.01,
+  "max_depth": 8,
+  "n_estimators": 10
+}
