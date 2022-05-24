@@ -25,7 +25,7 @@ CATEGORIES = [['Y', 'N', '9'], [Decimal('1'), Decimal('2'), Decimal('3'), Decima
                'NY', 'NC', 'ND', 'MP', 'OH', 'OK', 'OR', 'PA', 'PR', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VT', 'VA',
                'VI', 'WA', 'WV', 'WI', 'WY'],
               ['CO', 'PU', 'MH', 'SF', 'CP', '99'],
-              ['P', 'C', 'N', 'R', '9'], ['Y', None], ['H', Decimal('9')], ['Y', None],
+              ['P', 'C', 'N', 'R', '9'], ['Y', None],
               [Decimal('1'), Decimal('2'), Decimal('3'), Decimal('9')], ['Y', 'N']]
 
 '''
@@ -62,12 +62,6 @@ def add_jointed_table_with_quarter_and_default(year, quarter, query_session, cur
 
 def construct_default_joined_by_built_db(session):
     for origination in session.query(Ot.OriginationData).all():
-        # seq = origination.loan_sequence_number
-        # TODO: check the dimensions of the returned values of the list and make sure it contains 24 entities only
-        # zero_balance_code_list = session.query(mpt.Month_Performance_Data_Sample.zero_balance_code).filter(
-        #     mpt.Month_Performance_Data_Sample.loan_sequence_number.__eq__(seq)).all()[:23]
-        #
-        # default = len([*filter(lambda x: x >= 3, zero_balance_code_list)]) > 0
         session.add(jtd.OriginationDataWithDefault(credit_score=origination.credit_score,
                                                    first_payment_date=origination.first_payment_date,
                                                    first_time_homebuyer_flag=origination.first_time_homebuyer_flag,
@@ -113,28 +107,12 @@ def update_default_in_join_by_perf(session):
         for quarter in range(4, 5):
             month_perf_file_name = month_perf_name_prefix + "Q" + quarter.__str__() + ".txt"
             month_perf_df = pd.read_csv(month_perf_file_name, delimiter='|', header=None, dtype=object)
-            # month_perf_df.where(pd.notnull(month_perf_df), None, inplace=True)
-            # for i in range(month_perf_df.shape[0]):
-            #     # get the loan seq number
-            #     seq = session.query(Ots.OriginationDataSample).all().iloc[i, 19]
-            #     perf_of_seq = month_perf_df[month_perf_df[0] == seq]
-            #
-            #     zero_balance_code_list = perf_of_seq[8]
-            #     default = len([*filter(lambda x: x >= 3, zero_balance_code_list)]) > 0
-            #
-            #     add_jointed_table_with_quarter_and_default(year, quarter, query_session, origination_df.iloc[i, :])
 
             loan_with_zero_balance_code = month_perf_df[month_perf_df[8].notnull()]
             default_perf = loan_with_zero_balance_code[pd.to_numeric(loan_with_zero_balance_code[8]) >= 3]
-            # default_seq = default_perf[0]
-            # default_seq_with_date = session.execute(select(jtd.OriginationDataWithDefault.loan_sequence_number,
-            #                                                jtd.OriginationDataWithDefault.first_payment_date).where(
-            #     jtd.OriginationDataWithDefault.loan_sequence_number.in_(default_seq)))
-            # default_seq_with_date_df = pd.DataFrame(data=default_seq_with_date.all())
+
             # filter all loan sequence number whose monthly reporting period is far than 24 months to the first payment date
             valid_default_seq = default_perf[pd.to_numeric(default_perf[4]) <= 24][0].drop_duplicates()
-            # FIXME: replace with the feature loan age in the perf, not considering 1 year has 12 months only simple minus not applicable
-            # valid_default_seq =default_seq_with_date_df[0][pd.to_numeric(default_perf.reset_index(drop=True)[default_perf.reset_index(drop=True)[0]==default_seq_with_date_df[0]][1])-pd.to_numeric(default_seq_with_date_df[1])<=24]
             session.execute(update(jtd.OriginationDataWithDefault).where(
                 jtd.OriginationDataWithDefault.loan_sequence_number.in_(valid_default_seq)).values(default=True))
             session.commit()
@@ -149,7 +127,6 @@ def insert_origination_standard_with_quarter(year, query_session, sample=False):
         origination_file_name = raw_data_path + "standard/annual/sample/sample_" + year.__str__() + "/sample_orig_" + year.__str__() + ".txt"
         # insert_origination_from_txt(file_name, year, query_session, sample)
     else:
-        # TODO: confirm the file name convention
         origination_file_name_prefix = raw_data_path + "standard/annual/historical_data_" + year.__str__() + "/historical_data_" + year.__str__()
         month_perf_name_prefix = raw_data_path + "standard/annual/historical_data_" + year.__str__() + "/historical_data_time_" + year.__str__()
 
@@ -184,19 +161,13 @@ def insert_origination_from_txt_with_quarter(origination_file_name, month_perf_f
 
         add_jointed_table_with_quarter_and_default(year, quarter, query_session, origination_df.iloc[i, :])
 
-    # session.flush()
-    # session.commit()
-
 
 def individual_x_y(individual_obj):
     obj = individual_obj[0]
     data = [float(obj.credit_score),
             obj.first_time_homebuyer_flag,
-            float(obj.msa),
-            float(obj.mortgage_insurance_percentage,),
             obj.number_of_units,
             obj.occupancy_status,
-            float(obj.original_CLTV),
             float(obj.original_RTI_ratio),
             float(obj.original_UPB),
             float(obj.original_LTV),
@@ -210,24 +181,19 @@ def individual_x_y(individual_obj):
             float(obj.original_loan_term),
             float(obj.number_of_borrowers),
             obj.super_conforming_flag,
-            obj.program_indicator,
-            obj.harp_indicator,
             obj.property_valuation_method,
             obj.interest_only_indicator,
-            obj.quarter,
-            obj.year,
             obj.default]
     return data
 
 
 def encode(data):
-    # FIXME: make sure the encoder is consistent for both training and testing
-    categorical_data = [1, 4, 5, 11, 12, 13, 14, 15, 16, 19, 20, 21, 22, 23]
-    onehot_encoder = pre.OneHotEncoder(handle_unknown='ignore', sparse=False, categories=CATEGORIES)
+    categorical_data = [1, 2, 3, 8, 9, 10, 11, 12, 13, 16, 17, 18]
+    onehot_encoder = pre.OneHotEncoder(handle_unknown='ignore',sparse=False, categories=CATEGORIES)
     onehot_encoder.fit(data[:, categorical_data])
     encoded_categorical_feature = onehot_encoder.transform(data[:, categorical_data])
     encoded_data = np.concatenate(
-        (data[:, [0, 2, 3, 6, 7, 8, 9, 10,17, 18, 24, 25]], encoded_categorical_feature),
+        (data[:, [0, 4, 5, 6, 7, 14, 15]], encoded_categorical_feature),
         axis=1)
     print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
         "%Y-%m-%d %H:%M:%S") + " Data Encoding Complete.")
@@ -239,4 +205,3 @@ if __name__ == '__main__':
     jtd.Base.registry.metadata.create_all(engine)
     with Session(engine) as session:
         construct_default_joined_by_built_db(session)
-        # update_default_in_join_by_perf(session)
