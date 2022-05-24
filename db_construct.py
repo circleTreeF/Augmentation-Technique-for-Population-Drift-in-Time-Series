@@ -19,7 +19,6 @@ def insert_origination_standard(year, query_session, sample=False):
         file_name = raw_data_path + "standard/annual/sample/sample_" + year.__str__() + "/sample_orig_" + year.__str__() + ".txt"
         insert_origination_from_txt(file_name, year, query_session, sample)
     else:
-        # TODO: confirm the file name convention
         file_name_prefix = raw_data_path + "standard/annual/historical_data_" + year.__str__() + "/historical_data_" + year.__str__()
         for quarter in range(1, 5):
             if year == 2020 and quarter == 4:
@@ -33,7 +32,6 @@ def insert_origination_standard_with_quarter(year, query_session, sample=False):
         file_name = raw_data_path + "standard/annual/sample/sample_" + year.__str__() + "/sample_orig_" + year.__str__() + ".txt"
         insert_origination_from_txt(file_name, year, query_session, sample)
     else:
-        # TODO: confirm the file name convention
         file_name_prefix = raw_data_path + "standard/annual/historical_data_" + year.__str__() + "/historical_data_" + year.__str__()
         for quarter in range(4, 5):
             # if year == 2020 and quarter == 4:

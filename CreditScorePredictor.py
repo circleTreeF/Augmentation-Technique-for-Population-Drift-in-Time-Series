@@ -2,7 +2,7 @@ from sklearn.linear_model import LogisticRegression
 
 
 class CreditScoreRegressionClassifier:
-    def __init__(self, random_state=0):
+    def __init__(self, random_state=42):
         self.random_state = random_state
         self.classifier = LogisticRegression(random_state=random_state)
 

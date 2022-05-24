@@ -5,7 +5,6 @@ raw_data_path = 'raw_data/'
 
 
 def insert_performance_standard(year, sample=False):
-    # TODO: confirm the file name convention
     file_name_prefix = raw_data_path + "standard/annual/historical_data_" + year.__str__() + "/historical_data_" + year.__str__()
     sum = 0
     for quarter in range(1, 5):
