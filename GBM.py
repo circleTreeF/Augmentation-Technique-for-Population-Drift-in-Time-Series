@@ -1,27 +1,26 @@
-import os
-
 import lightgbm as lgb
 import numpy as np
 import json
 
-__random_sate__ = 41
+__random_sate__ = 42
 
-with open('GBM_params.json', 'r') as f:
+with open('/workspace/FYP/codespace/config/GBM_params.json', 'r') as f:
     gbm_para = json.load(f)
 
-gbm = lgb.LGBMClassifier(max_bin=31, learning_rate=0.01, n_estimators=10, random_state=__random_sate__)
 
+class GBM:
 
-def train(train_set, training_sample_weight=None):
-    lgb_train = lgb.Dataset(train_set[0], label=train_set[1])
-    gbm.fit(train_set[0], train_set[1], eval_metric='auc', sample_weight=training_sample_weight)
-    return gbm
+    def __init__(self):
+        self.classifier_machine = lgb.LGBMClassifier(learning_rate=0.01, n_estimators=150, random_state=42)
 
+    def train(self, train_set, training_sample_weight=None):
+        lgb_train = lgb.Dataset(train_set[0], label=train_set[1])
+        self.classifier_machine.fit(train_set[0], train_set[1], eval_metric='auc', sample_weight=training_sample_weight)
 
-def test(test_set):
-    lgb_test = lgb.Dataset(test_set[0], label=test_set[1])
-    y_pred = gbm.predict(lgb_test, num_iteration=gbm.best_iteration)
-    return y_pred
+    def test(self, test_set):
+        lgb_test = lgb.Dataset(test_set[0], label=test_set[1])
+        y_pred = self.classifier_machine.predict(lgb_test, num_iteration=self.classifier_machine.best_iteration_)
+        return y_pred
 
 
 """

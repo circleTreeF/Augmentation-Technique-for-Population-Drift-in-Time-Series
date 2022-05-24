@@ -23,26 +23,18 @@ import utility
 from contextlib import closing
 import gc
 from sklearn.decomposition import PCA
+from model.LogisticClassifier import LRClassifier
+from scipy.stats import ks_2samp
 
-exper_name = 'pca-train-2006-test-all-years-train-ratio=1-v4-weight-norm-1-non-random-GBDT-pure-random-data-run0-bandwidth='
-engine = create_engine('postgresql://postgres:postgres@10.182.20.32:28888', echo=True, future=True)
+exper_name = 'Native-kde-bandwidth=0.4-years=2006-test=2006-2019-non-subsampling-test-time-train-ratio=0.8-v4-non-random-all-logisticClassifier-run0-bandwidth='
+engine = create_engine('postgresql://postgres:postgres@10.182.20.32:28888', echo=True)
 num_processor = 32
 
+train_ratio = 0.9
 train_year = 2006
 test_year = 2009
-bandwidth = 0.72
-train_ratio = 0.8
-
-TIME_STEP = 22 * 60
-INIT_DATETIME = datetime.datetime(year=2022, month=3, day=15, hour=22, minute=30, second=11,
-                                  tzinfo=pytz.timezone('Asia/Shanghai')).timestamp()
-PREPROCESSING_BIAS = 5 * 60 + 8
-count = 31
-precessing_count = 0
-
-
+bandwidth = 0.4
 exper_name += str(bandwidth)
-start_time = datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).timestamp()
 
 with open('config/RiskModel.json', 'r') as f:
     risk_dict = json.load(f)
@@ -60,9 +52,11 @@ result = {'selected number of test defaults': [],
 
           'all year AUC': [],
           'augmentation AUC': [],
-          'bandwidth': []
+          'bandwidth': [],
+          'test year': []
           }
 
+exper_name += '-seed=' + str(random_dict['seed']) +'-'
 
 
 def get_loan_by_year(session, year):
@@ -75,6 +69,22 @@ def get_loan_by_year(session, year):
     return query_result
 
 
+"""
+Input: X and Y for the whole data set
+Output: (x train, y train), (x test, y test)
+"""
+
+
+# deprecated function
+# def loans_split(input_loans_x, input_loans_y):
+#     data_size = len(input_loans_x)
+#     is_defaults = np.vectorize(int)(input_loans_y)
+#     train_size = int(data_size * train_ratio)
+#     x_train = input_loans_x[:train_size]
+#     y_train = is_defaults[:train_size]
+#     x_test = input_loans_x[train_size:]
+#     y_test = is_defaults[train_size:]
+#     return (x_train, y_train), (x_test, y_test)
 
 
 def pca_dim_reduce(input_data, num_components):
@@ -83,13 +93,51 @@ def pca_dim_reduce(input_data, num_components):
     return pca, pca.transform(input_data)
 
 
+def db_class_to_array(loans_data):
+    gc.collect()
+    with closing(mp.Pool(num_processor)) as p:
+        loans_data_list = p.map(pre.individual_x_y, loans_data)
+        # clean up
+        p.close()
+        p.join()
+    print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
+        "%Y-%m-%d %H:%M:%S") + " Queried Data Formatted")
+    loans_data_array = np.array(loans_data_list)
+    return loans_data_array
+
+
+def preprocessing(loans_data_array,select_ratio):
+    rng = np.random.default_rng(**random_dict)
+    non_default_loans = loans_data_array[loans_data_array[:, 19] == False]
+    default_loans = loans_data_array[loans_data_array[:, 19] == True]
+    random_non_default_index = rng.choice(len(non_default_loans),
+                                          int(len(non_default_loans) * select_ratio), replace=False)
+    random_non_default = non_default_loans[random_non_default_index]
+    balanced_loans = np.concatenate((default_loans, random_non_default))
+    rng.shuffle(balanced_loans)
+    X = loans_data_array[:, :19]
+    Y = loans_data_array[:, 19].astype('int')
+
+    encoded_x = pre.encode(X)
+    non_missed_credit_score_data = encoded_x[encoded_x[:, 0] != 999]
+    missed_x_credit_factors = encoded_x[encoded_x[:, 0] == 999][:, 1:]
+    if len(missed_x_credit_factors) > 0:
+        credit_score_classifier = Csp.CreditScoreRegressionClassifier()
+        credit_score_classifier.train(non_missed_credit_score_data)
+        encoded_x[encoded_x[:, 0] == 999] = credit_score_classifier.predict(missed_x_credit_factors)
+    encoded_x = encoded_x.astype(float)
+    print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
+        "%Y-%m-%d %H:%M:%S") + " Data Pre-precessed")
+    return encoded_x, Y
+
+
 def preprocessing_init_year(loans_data_array):
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(**random_dict)
     non_default_loans = loans_data_array[loans_data_array[:, 19] == False]
     default_loans = loans_data_array[loans_data_array[:, 19] == True]
     random_non_default_index_train = rng.choice(len(non_default_loans),
                                                 int(len(non_default_loans) * risk_dict[
-                                                    'non_default_loans_select_ratio_train']), replace=False)
+                                                    'non_default_loans_select_ratio']), replace=False)
     random_non_default_train = non_default_loans[random_non_default_index_train]
 
     random_default_index_train = rng.choice(len(default_loans), int(len(default_loans) * train_ratio), replace=False)
@@ -127,110 +175,8 @@ def preprocessing_init_year(loans_data_array):
         encoded_x_test[encoded_x_test[:, 0] == 999] = credit_score_classifier.predict(missed_x_credit_factors)
     encoded_x_test = encoded_x_test.astype(float)
     print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
-        "%Y-%m-%d %H:%M:%S") + " Data Pre-processed")
+        "%Y-%m-%d %H:%M:%S") + " Data Pre-precessed")
     return encoded_x_train, Y_train, encoded_x_test, Y_test
-
-
-def preprocessing_non_pca(loans_data_array, select_ratio):
-    rng = np.random.default_rng()
-    non_default_loans = loans_data_array[loans_data_array[:, 19] == False]
-    default_loans = loans_data_array[loans_data_array[:, 19] == True]
-    random_non_default_index = rng.choice(len(non_default_loans),
-                                          int(len(non_default_loans) * select_ratio), replace=False)
-    random_non_default = non_default_loans[random_non_default_index]
-    balanced_loans = np.concatenate((default_loans, random_non_default))
-    rng.shuffle(balanced_loans)
-    X = balanced_loans[:, :19]
-    Y = balanced_loans[:, 19].astype('int')
-    encoded_x = pre.encode(X)
-    non_missed_credit_score_data = encoded_x[encoded_x[:, 0] != 999]
-    missed_x_credit_factors = encoded_x[encoded_x[:, 0] == 999][:, 1:]
-    if len(missed_x_credit_factors) > 0:
-        credit_score_classifier = Csp.CreditScoreRegressionClassifier()
-        credit_score_classifier.train(non_missed_credit_score_data)
-        encoded_x[encoded_x[:, 0] == 999] = credit_score_classifier.predict(missed_x_credit_factors)
-    encoded_x = encoded_x.astype(float)
-    print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
-        "%Y-%m-%d %H:%M:%S") + " Data Pre-processed")
-    return encoded_x, Y
-
-
-def db_class_to_array(loans_data):
-    gc.collect()
-    with closing(mp.Pool(num_processor)) as p:
-        loans_data_list = p.map(pre.individual_x_y, loans_data)
-        # clean up
-        p.close()
-        p.join()
-    print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
-        "%Y-%m-%d %H:%M:%S") + " Queried Data Formatted")
-    loans_data_array = np.array(loans_data_list)
-    return loans_data_array
-
-
-def preprocessing_train(loans_data_array):
-    rng = np.random.default_rng()
-    non_default_loans = loans_data_array[loans_data_array[:, 19] == False]
-    default_loans = loans_data_array[loans_data_array[:, 19] == True]
-    random_non_default_index = rng.choice(len(non_default_loans),
-                                          int(len(non_default_loans) * risk_dict[
-                                              'non_default_loans_select_ratio_train']), replace=False)
-    random_non_default = non_default_loans[random_non_default_index]
-    balanced_loans = np.concatenate((default_loans, random_non_default))
-    rng.shuffle(balanced_loans)
-    X = balanced_loans[:, :19]
-    Y = balanced_loans[:, 19].astype('int')
-    encoded_x = pre.encode(X)
-    non_missed_credit_score_data = encoded_x[encoded_x[:, 0] != 999]
-    missed_x_credit_factors = encoded_x[encoded_x[:, 0] == 999][:, 1:]
-    if len(missed_x_credit_factors) > 0:
-        credit_score_classifier = Csp.CreditScoreRegressionClassifier()
-        credit_score_classifier.train(non_missed_credit_score_data)
-        encoded_x[encoded_x[:, 0] == 999] = credit_score_classifier.predict(missed_x_credit_factors)
-    encoded_x = encoded_x.astype(float)
-    print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
-        "%Y-%m-%d %H:%M:%S") + " Data Pre-processed")
-    pca_transformer, reduced_x = pca_dim_reduce(encoded_x, num_components=args.Dimensions)
-    print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
-        "%Y-%m-%d %H:%M:%S") + " Dimensions Reduced by PCA")
-    return reduced_x, Y, pca_transformer
-
-
-def preprocessing_test(loans_data, pca_transformer):
-    rng = np.random.default_rng()
-    gc.collect()
-    with closing(mp.Pool(num_processor)) as p:
-        loans_data_list = p.map(pre.individual_x_y, loans_data)
-        # clean up
-        p.close()
-        p.join()
-    print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
-        "%Y-%m-%d %H:%M:%S") + " Queried Data Formatted")
-    loans_data_array = np.array(loans_data_list)
-    non_default_loans = loans_data_array[loans_data_array[:, 19] == False]
-    default_loans = loans_data_array[loans_data_array[:, 19] == True]
-    random_non_default_index = rng.choice(len(non_default_loans), int(len(non_default_loans) * risk_dict[
-        'non_default_loans_select_ratio_test']), replace=False)
-    random_non_default = non_default_loans[random_non_default_index]
-    balanced_loans = np.concatenate((default_loans, random_non_default))
-    # balanced_loans = loans_data_array
-    rng.shuffle(balanced_loans)
-    X = balanced_loans[:, :19]
-    Y = balanced_loans[:, 19].astype('int')
-    encoded_x = pre.encode(X)
-    non_missed_credit_score_data = encoded_x[encoded_x[:, 0] != 999]
-    missed_x_credit_factors = encoded_x[encoded_x[:, 0] == 999][:, 1:]
-    if len(missed_x_credit_factors) > 0:
-        credit_score_classifier = Csp.CreditScoreRegressionClassifier()
-        credit_score_classifier.train(non_missed_credit_score_data)
-        encoded_x[encoded_x[:, 0] == 999] = credit_score_classifier.predict(missed_x_credit_factors)
-    encoded_x = encoded_x.astype(float)
-    print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
-        "%Y-%m-%d %H:%M:%S") + " Data Pre-processed")
-    reduced_x = pca_transformer.transform(encoded_x)
-    print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
-        "%Y-%m-%d %H:%M:%S") + " Dimensions Reduced by PCA")
-    return reduced_x, Y
 
 
 def evaluate(model, test_x, test_y):
@@ -258,49 +204,46 @@ if __name__ == '__main__':
     selected_train_default_numbers = []
     aug_auc = []
     bandwidth_dict = []
+    test_year_dict = []
+    ks_values_base = []
+    ks_values_aug = []
     out_path = 'output/augmentation-exper/all-years-expers/' + datetime.datetime.now(
         tz=pytz.timezone('Asia/Shanghai')).strftime(
-        "%Y-%m-%d-%H-%M-%S") + '-dim=' + str(
-        args.Dimensions) + '/'
+        "%Y-%m-%d-%H-%M-%S") + '/'
     os.mkdir(out_path)
 
+    # pca_machine= PCA(n_components=)
     with Session(engine) as session:
         train_loans = get_loan_by_year(session, train_year)
-        train_loans_array = db_class_to_array(train_loans)
-        X_train, y_train, train_pca_transformer = preprocessing_train(train_loans_array)
-        X_train_non_pca_init_year, y_train_non_pca_init_year, X_test_non_pca_init_year, y_test_non_pca_init_year = preprocessing_init_year(
-            train_loans_array)
-        gbm = GBM.GBM()
-        gbm.train((X_train_non_pca_init_year, y_train_non_pca_init_year))
+        training_year_loans_array = db_class_to_array(train_loans)
 
-        y_test_prob_original = gbm.classifier_machine.predict_proba(X_test_non_pca_init_year,
-                                                                    num_iteration=gbm.classifier_machine.best_iteration_)
-        current_auc_original = metrics.roc_auc_score(y_test_non_pca_init_year, y_test_prob_original[:, 1])
+        X_train, y_train, X_test, y_test = preprocessing_init_year(training_year_loans_array)
+        classifier_baseline = LRClassifier()
+        classifier_baseline.train(X_train, y_train)
+        y_test_prob_original = classifier_baseline.predict_proba(X_test)
+        current_auc_original = metrics.roc_auc_score(y_test, y_test_prob_original[:, 1])
         all_years_auc.append(current_auc_original)
         aug_auc.append(current_auc_original)
-        selected_test_loan_numbers.append(X_test_non_pca_init_year.shape[0])
-        selected_train_loan_numbers.append(X_train_non_pca_init_year.shape[0])
-
-        x_default_test = X_test_non_pca_init_year[y_test_non_pca_init_year == 1]
-        y_default_test = y_test_non_pca_init_year[y_test_non_pca_init_year == 1]
+        selected_test_loan_numbers.append(X_test.shape[0])
+        selected_train_loan_numbers.append(X_train.shape[0])
+        x_default_test = X_test[y_test == 1]
+        y_default_test = y_test[y_test == 1]
         default_number = len(y_default_test)
         y_default_train = y_train[y_train == 1]
         selected_train_default_numbers.append(len(y_default_train))
         selected_test_default_numbers.append(default_number)
         bandwidth_dict.append(bandwidth)
+        test_year_dict.append(test_year)
+        print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
+            "%Y-%m-%d %H:%M:%S") + "Model Evaluated for year " + str(train_year))
+
 
         for test_year in np.arange(2007, 2021, 1):
             gc.collect()
-            precessing_count = 0
-            X_train, y_train, train_pca_transformer = preprocessing_train(train_loans_array)
-            precessing_count += 1
             test_loans = get_loan_by_year(session, int(test_year))
             testing_year_loans_array = db_class_to_array(test_loans)
-            X_test, y_test = preprocessing_test(test_loans, train_pca_transformer)
-            precessing_count += 1
-            X_train_non_pca, y_train_non_pca = preprocessing_non_pca(train_loans_array, 0.01)
-            precessing_count += 1
-            X_test_non_pca, y_test_non_pca = preprocessing_non_pca(testing_year_loans_array, 0.01)
+            X_test, y_test = preprocessing(testing_year_loans_array, 0.01)
+            # train_set, test_set = loans_split(X, y)
             """
             augmentation
             """
@@ -314,26 +257,26 @@ if __name__ == '__main__':
                 if args.Normalization == 'norm-small':
                     weight = pdf_train_v2 / np.sum(pdf_train_v2)
             print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
-                "%Y-%m-%d %H:%M:%S") + " Modeling start")
-
-            gbm = GBM.GBM()
-            gbm.train((X_train_non_pca, y_train_non_pca))
-            y_test_prob_original = gbm.classifier_machine.predict_proba(X_test_non_pca,
-                                                                        num_iteration=gbm.classifier_machine.best_iteration_)
-            current_auc_original = metrics.roc_auc_score(y_test_non_pca, y_test_prob_original[:, 1])
-            all_years_auc.append(current_auc_original)
+            "%Y-%m-%d %H:%M:%S") + "Modeling start")
+            classifier_aug = LRClassifier()
+            classifier_aug.train(X_train, y_train, weight)
             # prediction result evaluation
-            gbm_aug = GBM.GBM()
-            gbm_aug.train((X_train, y_train), weight)
-            y_test_prob_aug = gbm_aug.classifier_machine.predict_proba(X_test,
-                                                                       num_iteration=gbm_aug.classifier_machine.best_iteration_)
+            y_test_prob_aug = classifier_aug.predict_proba(X_test)
             current_aug_auc = metrics.roc_auc_score(y_test, y_test_prob_aug[:, 1])
             aug_auc.append(current_aug_auc)
+            current_ks_aug = ks_2samp(y_test_prob_aug[:, 0], y_test_prob_aug[:, 1])
+            ks_values_aug.append(current_ks_aug)
 
             # predict_clf = clf.predict(X_test)
             # auc = evaluate(clf, X_test, y_test)
+            y_test_prob_original = classifier_baseline.predict_proba(X_test)
+            current_auc_original = metrics.roc_auc_score(y_test, y_test_prob_original[:, 1])
+            all_years_auc.append(current_auc_original)
+            current_ks = ks_2samp(y_test_prob_original[:, 0], y_test_prob_original[:, 1])
+            ks_values_base.append(current_ks)
+
             print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
-                "%Y-%m-%d %H:%M:%S") + "Model Evaluated for bandwidth " + "{:.4f}".format(bandwidth))
+                "%Y-%m-%d %H:%M:%S") + "Model Evaluated for year " + str(test_year))
 
             # score = clf.score(X_test, y_test)
             # all_years_score.append(score)
@@ -348,6 +291,7 @@ if __name__ == '__main__':
             selected_train_default_numbers.append(len(y_default_train))
             selected_test_default_numbers.append(default_number)
             bandwidth_dict.append(bandwidth)
+            test_year_dict.append(test_year)
 
     finalize_session(session)
     if args.Normalization == 'norm-1':
@@ -367,6 +311,9 @@ if __name__ == '__main__':
         result['all year AUC'] = all_years_auc
         result['augmentation AUC'] = aug_auc
         result['bandwidth'] = bandwidth_dict
+        result['test year'] = test_year_dict
+        result['ks'] = ks_values_base
+        result['ks aug'] = ks_values_aug
         json.dump(result, f)
-    print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
-        "%Y-%m-%d:%H:%M:%S") + " Result Stored as " + stored_file_name)
+        print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
+            "%Y-%m-%d:%H:%M:%S") + " Result Stored as " + stored_file_name)

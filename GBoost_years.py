@@ -17,22 +17,30 @@ import json
 import augmentation as aug
 import lightgbm as lgb
 import GBM
+from itertools import repeat
+from sklearn.metrics import accuracy_score
 import utility
 from contextlib import closing
 import gc
+from sklearn.decomposition import PCA
 
-exper_name = 'naive-kde-bandwidth-0.3-to-0.511-step=0.001-nondefault-select-ratio=0.01-2006-2009-v4-non-random-GBDT-random-data-run-2-'
+exper_name = 'Native-kde-bandwidth=0.6-pca-d=50-years=2006-test=2006-2019-non-subsampling-test-time-v4-non-random-all-run1'
 engine = create_engine('postgresql://postgres:postgres@10.182.20.32:28888', echo=True)
 num_processor = 32
 
 train_year = 2006
 test_year = 2009
+bandwidth = 0.6
 
-train_ratio = 0.8
+
 with open('config/RiskModel.json', 'r') as f:
     risk_dict = json.load(f)
 
+with open('config/random.json', 'r') as f:
+    random_dict = json.load(f)
 
+with open('config/pca.json', 'r') as f:
+    pca_dict = json.load(f)
 
 result = {'selected number of test defaults': [],
           'selected number of test loans': [],
@@ -41,7 +49,8 @@ result = {'selected number of test defaults': [],
 
           'all year AUC': [],
           'augmentation AUC': [],
-          'bandwidth': []
+          'bandwidth': [],
+          'test year':[]
           }
 
 
@@ -60,19 +69,27 @@ Input: X and Y for the whole data set
 Output: (x train, y train), (x test, y test)
 """
 
+# deprecated function
+# def loans_split(input_loans_x, input_loans_y):
+#     data_size = len(input_loans_x)
+#     is_defaults = np.vectorize(int)(input_loans_y)
+#     train_size = int(data_size * train_ratio)
+#     x_train = input_loans_x[:train_size]
+#     y_train = is_defaults[:train_size]
+#     x_test = input_loans_x[train_size:]
+#     y_test = is_defaults[train_size:]
+#     return (x_train, y_train), (x_test, y_test)
 
-def loans_split(input_loans_x, input_loans_y):
-    data_size = len(input_loans_x)
-    is_defaults = np.vectorize(int)(input_loans_y)
-    train_size = int(data_size * train_ratio)
-    x_train = input_loans_x[:train_size]
-    y_train = is_defaults[:train_size]
-    x_test = input_loans_x[train_size:]
-    y_test = is_defaults[train_size:]
-    return (x_train, y_train), (x_test, y_test)
+
+def pca_dim_reduce(input_data, num_components):
+    pca = PCA(n_components=int(num_components), **pca_dict)
+    pca.fit(input_data)
+    return pca, pca.transform(input_data)
 
 
-def db_class_to_array(loans_data):
+def preprocessing_train(loans_data):
+    rng = np.random.default_rng(**random_dict)
+    rng.shuffle(loans_data)
     gc.collect()
     with closing(mp.Pool(num_processor)) as p:
         loans_data_list = p.map(pre.individual_x_y, loans_data)
@@ -82,16 +99,10 @@ def db_class_to_array(loans_data):
     print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
         "%Y-%m-%d %H:%M:%S") + " Queried Data Formatted")
     loans_data_array = np.array(loans_data_list)
-    return loans_data_array
-
-
-def preprocessing(loans_data_array):
-    rng = np.random.default_rng()
-
     non_default_loans = loans_data_array[loans_data_array[:, 19] == False]
     default_loans = loans_data_array[loans_data_array[:, 19] == True]
     random_non_default_index = rng.choice(len(non_default_loans),
-                                          int(len(non_default_loans) * risk_dict['non_default_loans_select_ratio_train']))
+                                          int(len(non_default_loans) * risk_dict['non_default_loans_select_ratio']))
     random_non_default = non_default_loans[random_non_default_index]
     balanced_loans = np.concatenate((default_loans, random_non_default))
     rng.shuffle(balanced_loans)
@@ -107,7 +118,49 @@ def preprocessing(loans_data_array):
     encoded_x = encoded_x.astype(float)
     print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
         "%Y-%m-%d %H:%M:%S") + " Data Pre-precessed")
-    return encoded_x, Y
+    pca_transformer, reduced_x = pca_dim_reduce(encoded_x, num_components=args.Dimensions)
+    print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
+        "%Y-%m-%d %H:%M:%S") + " Dimensions Reduced by PCA")
+    return reduced_x, Y, pca_transformer
+
+
+def preprocessing_test(loans_data, pca_transformer):
+    rng = np.random.default_rng(**random_dict)
+    rng.shuffle(loans_data)
+    gc.collect()
+    with closing(mp.Pool(num_processor)) as p:
+        loans_data_list = p.map(pre.individual_x_y, loans_data)
+        # clean up
+        p.close()
+        p.join()
+    print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
+        "%Y-%m-%d %H:%M:%S") + " Queried Data Formatted")
+    loans_data_array = np.array(loans_data_list)
+    # Balance the non-default data and default by subsampling the non-default loans in a given ratio
+    # non_default_loans = loans_data_array[loans_data_array[:, 19] == False]
+    # default_loans = loans_data_array[loans_data_array[:, 19] == True]
+    # random_non_default_index = rng.choice(len(non_default_loans),
+    #                                       int(len(non_default_loans) * risk_dict['non_default_loans_select_ratio']))
+    # random_non_default = non_default_loans[random_non_default_index]
+    # balanced_loans = np.concatenate((default_loans, random_non_default))
+    balanced_loans = loans_data_array
+    rng.shuffle(balanced_loans)
+    X = balanced_loans[:, :19]
+    Y = balanced_loans[:, 19].astype('int')
+    encoded_x = pre.encode(X)
+    non_missed_credit_score_data = encoded_x[encoded_x[:, 0] != 999]
+    missed_x_credit_factors = encoded_x[encoded_x[:, 0] == 999][:, 1:]
+    if len(missed_x_credit_factors) > 0:
+        credit_score_classifier = Csp.CreditScoreRegressionClassifier()
+        credit_score_classifier.train(non_missed_credit_score_data)
+        encoded_x[encoded_x[:, 0] == 999] = credit_score_classifier.predict(missed_x_credit_factors)
+    encoded_x = encoded_x.astype(float)
+    print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
+        "%Y-%m-%d %H:%M:%S") + " Data Pre-precessed")
+    reduced_x = pca_transformer.transform(encoded_x)
+    print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
+        "%Y-%m-%d %H:%M:%S") + " Dimensions Reduced by PCA")
+    return reduced_x, Y
 
 
 def evaluate(model, test_x, test_y):
@@ -116,33 +169,17 @@ def evaluate(model, test_x, test_y):
     return auc
 
 
-def test(year, clf, session):
-    loans = get_loan_by_year(session, year)
-    X, y = preprocessing(loans)
-
-    train_set, test_set = loans_split(X, y)
-    predict_clf = clf.predict(X_test)
-    auc = evaluate(clf, X_test, y_test)
-    score = clf.score(X_test, y_test)
-    x_default_test = X_test[y_test == 1]
-    y_default_test = y_test[y_test == 1]
-    default_number = len(y_default_test)
-    print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
-        "%Y-%m-%d %H:%M:%S ") + "Model Evaluated for year " + str(year))
-
-    if default_number > 0:
-        default_score = clf.score(x_default_test, y_default_test)
-    else:
-        default_score = None
-    return auc, default_score, default_number
-
-
 def finalize_session(_session):
     _session.expire_all()
     _session.close()
 
 
 if __name__ == '__main__':
+    # Read arguments from command line
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-n", "--Normalization", help="Weight Normalization Approaches")
+    parser.add_argument("-d", "--Dimensions", help="Number of Dimensions after PCA")
+    args = parser.parse_args()
     all_years_score = []
     all_years_auc = []
     default_years_score = []
@@ -152,41 +189,33 @@ if __name__ == '__main__':
     selected_train_default_numbers = []
     aug_auc = []
     bandwidth_dict = []
-    dens_out_path = 'output/augmentation-exper/bandwidth-exper/' + datetime.datetime.now(
+    test_year_dict = []
+    out_path = 'output/augmentation-exper/all-years-expers/' + datetime.datetime.now(
         tz=pytz.timezone('Asia/Shanghai')).strftime(
-        "%Y-%m-%d-%H-%M-%S") + '/'
-    os.mkdir(dens_out_path)
-    # Read arguments from command line
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-n", "--Normalization", help="Weight Normalization Approaches")
-    args = parser.parse_args()
+        "%Y-%m-%d-%H-%M-%S") + '-dim=' + str(
+        args.Dimensions) + '/'
+    os.mkdir(out_path)
 
     with Session(engine) as session:
         train_loans = get_loan_by_year(session, train_year)
-        training_year_loans_array = db_class_to_array(train_loans)
-
-        test_loans = get_loan_by_year(session, test_year)
-        testing_year_loans_array = db_class_to_array(test_loans)
-
-        for bandwidth in np.arange(0.3, 0.602, 0.002):
-
+        for test_year in np.arange(2009, 2021, 1):
             gc.collect()
-            X_train, y_train = preprocessing(training_year_loans_array)
-            X_test, y_test = preprocessing(testing_year_loans_array)
+            X_train, y_train, train_pca_transformer = preprocessing_train(train_loans)
+            test_loans = get_loan_by_year(session, int(test_year))
+            X_test, y_test = preprocessing_test(test_loans, train_pca_transformer)
             """
             augmentation
             """
             density, density_estimate = aug.distribution_modifier(X_test, __bandwidth=bandwidth)
             pdf_train_v2 = density_estimate.evaluate(aug.distribution_normalization(X_train))
-            utility.save_density_with_bandwidth(dens_out_path, pdf_train_v2, bandwidth)
+            utility.save_density_with_bandwidth(out_path, pdf_train_v2, "{:.4f}".format(bandwidth))
 
-            if args.Normalization == 'norm-1':
+            if args.Normalization == 'normalization-1':
                 weight = pdf_train_v2.shape[0] * pdf_train_v2 / np.sum(pdf_train_v2)
             else:
-                if args.Normalization == 'norm-small':
+                if args.Normalization == 'normalization-small':
                     weight = pdf_train_v2 / np.sum(pdf_train_v2)
-            print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
-                "%Y-%m-%d %H:%M:%S") + " Modeling start")
+            print("Modeling start")
             gbm_aug = GBM.GBM()
             gbm = GBM.GBM()
             gbm_aug.train((X_train, y_train), weight)
@@ -197,13 +226,12 @@ if __name__ == '__main__':
             current_aug_auc = metrics.roc_auc_score(y_test, y_test_prob_aug[:, 1])
             aug_auc.append(current_aug_auc)
 
-
             y_test_prob_original = gbm.classifier_machine.predict_proba(X_test,
                                                                         num_iteration=gbm.classifier_machine.best_iteration_)
             current_auc_original = metrics.roc_auc_score(y_test, y_test_prob_original[:, 1])
             all_years_auc.append(current_auc_original)
             print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
-                "%Y-%m-%d %H:%M:%S") + "Model Evaluated for bandwidth " + str(bandwidth))
+                "%Y-%m-%d %H:%M:%S") + "Model Evaluated for bandwidth " + "{:.4f}".format(bandwidth))
 
 
 
@@ -215,18 +243,20 @@ if __name__ == '__main__':
             default_number = len(y_default_test)
             y_default_train = y_train[y_train == 1]
             selected_train_default_numbers.append(len(y_default_train))
+
             selected_test_default_numbers.append(default_number)
             bandwidth_dict.append(bandwidth)
+            test_year_dict.append(test_year)
 
     finalize_session(session)
-    if args.Normalization == 'norm-1':
-        stored_file_name = dens_out_path + exper_name + 'normalization-1' + '.exper.auc.json'
+    if args.Normalization == 'normalization-1':
+        stored_file_name = out_path + exper_name + '-dim=' + str(
+            args.Dimensions) + '-normalization-1' + '.exper.auc.json'
     else:
-        if args.Normalization == 'norm-small':
-            stored_file_name = dens_out_path + exper_name + 'normalization-small' + '.exper.auc.json'
+        if args.Normalization == 'normalization-small':
+            stored_file_name = out_path + exper_name + '-dim=' + str(
+                args.Dimensions) + '-normalization-small' + '.exper.auc.json'
     with open(stored_file_name, 'w+') as f:
-        # result = {'all year scores': all_years_score, 'default all years score': default_years_score,
-        #           'number of defaults': default_numbers, 'all year AUC': all_years_auc}
         result['selected number of test defaults'] = selected_test_default_numbers
         result['selected number of test loans'] = selected_test_loan_numbers
         result['selected number of train defaults'] = selected_train_default_numbers
@@ -234,6 +264,7 @@ if __name__ == '__main__':
         result['all year AUC'] = all_years_auc
         result['augmentation AUC'] = aug_auc
         result['bandwidth'] = bandwidth_dict
+        result['test year'] = test_year_dict
         json.dump(result, f)
         print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
             "%Y-%m-%d:%H:%M:%S") + " Result Stored as " + stored_file_name)

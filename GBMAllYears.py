@@ -24,25 +24,14 @@ from contextlib import closing
 import gc
 from sklearn.decomposition import PCA
 
-exper_name = 'pca-train-2006-test-all-years-train-ratio=1-v4-weight-norm-1-non-random-GBDT-pure-random-data-run0-bandwidth='
-engine = create_engine('postgresql://postgres:postgres@10.182.20.32:28888', echo=True, future=True)
+exper_name = 'Native-kde-bandwidth=0.6-pca-train-2006-test-all-years-train-ratio=1-v4-weight-norm-1-non-random-GBDT-random-data-fix-repeat-year-run0'
+engine = create_engine('postgresql://postgres:postgres@db', echo=True, future=True)
 num_processor = 32
 
 train_year = 2006
 test_year = 2009
-bandwidth = 0.72
+bandwidth = 0.5
 train_ratio = 0.8
-
-TIME_STEP = 22 * 60
-INIT_DATETIME = datetime.datetime(year=2022, month=3, day=15, hour=22, minute=30, second=11,
-                                  tzinfo=pytz.timezone('Asia/Shanghai')).timestamp()
-PREPROCESSING_BIAS = 5 * 60 + 8
-count = 31
-precessing_count = 0
-
-
-exper_name += str(bandwidth)
-start_time = datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).timestamp()
 
 with open('config/RiskModel.json', 'r') as f:
     risk_dict = json.load(f)
@@ -64,7 +53,6 @@ result = {'selected number of test defaults': [],
           }
 
 
-
 def get_loan_by_year(session, year):
     joined_tables = jtd.OriginationDataWithDefault
     query_result = session.execute(
@@ -73,7 +61,6 @@ def get_loan_by_year(session, year):
     print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
         "%Y-%m-%d %H:%M:%S") + " Query Complete. Data Got from database")
     return query_result
-
 
 
 
@@ -89,7 +76,7 @@ def preprocessing_init_year(loans_data_array):
     default_loans = loans_data_array[loans_data_array[:, 19] == True]
     random_non_default_index_train = rng.choice(len(non_default_loans),
                                                 int(len(non_default_loans) * risk_dict[
-                                                    'non_default_loans_select_ratio_train']), replace=False)
+                                              'non_default_loans_select_ratio_train']), replace=False)
     random_non_default_train = non_default_loans[random_non_default_index_train]
 
     random_default_index_train = rng.choice(len(default_loans), int(len(default_loans) * train_ratio), replace=False)
@@ -169,7 +156,7 @@ def db_class_to_array(loans_data):
 
 
 def preprocessing_train(loans_data_array):
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(int(random_dict['seed']))
     non_default_loans = loans_data_array[loans_data_array[:, 19] == False]
     default_loans = loans_data_array[loans_data_array[:, 19] == True]
     random_non_default_index = rng.choice(len(non_default_loans),
@@ -197,7 +184,7 @@ def preprocessing_train(loans_data_array):
 
 
 def preprocessing_test(loans_data, pca_transformer):
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(int(random_dict['seed']))
     gc.collect()
     with closing(mp.Pool(num_processor)) as p:
         loans_data_list = p.map(pre.individual_x_y, loans_data)
@@ -264,10 +251,10 @@ if __name__ == '__main__':
         args.Dimensions) + '/'
     os.mkdir(out_path)
 
+    # pca_machine= PCA(n_components=)
     with Session(engine) as session:
         train_loans = get_loan_by_year(session, train_year)
         train_loans_array = db_class_to_array(train_loans)
-        X_train, y_train, train_pca_transformer = preprocessing_train(train_loans_array)
         X_train_non_pca_init_year, y_train_non_pca_init_year, X_test_non_pca_init_year, y_test_non_pca_init_year = preprocessing_init_year(
             train_loans_array)
         gbm = GBM.GBM()
@@ -284,28 +271,24 @@ if __name__ == '__main__':
         x_default_test = X_test_non_pca_init_year[y_test_non_pca_init_year == 1]
         y_default_test = y_test_non_pca_init_year[y_test_non_pca_init_year == 1]
         default_number = len(y_default_test)
-        y_default_train = y_train[y_train == 1]
+        y_default_train = y_train_non_pca_init_year[y_train_non_pca_init_year == 1]
         selected_train_default_numbers.append(len(y_default_train))
         selected_test_default_numbers.append(default_number)
         bandwidth_dict.append(bandwidth)
 
+
         for test_year in np.arange(2007, 2021, 1):
             gc.collect()
-            precessing_count = 0
-            X_train, y_train, train_pca_transformer = preprocessing_train(train_loans_array)
-            precessing_count += 1
             test_loans = get_loan_by_year(session, int(test_year))
             testing_year_loans_array = db_class_to_array(test_loans)
-            X_test, y_test = preprocessing_test(test_loans, train_pca_transformer)
-            precessing_count += 1
-            X_train_non_pca, y_train_non_pca = preprocessing_non_pca(train_loans_array, 0.01)
-            precessing_count += 1
-            X_test_non_pca, y_test_non_pca = preprocessing_non_pca(testing_year_loans_array, 0.01)
+            X_train_non_pca, y_train_non_pca = preprocessing_non_pca(train_loans_array,0.01)
+            X_test_non_pca, y_test_non_pca = preprocessing_non_pca(testing_year_loans_array,0.01)
+            # train_set, test_set = loans_split(X, y)
             """
             augmentation
             """
-            density, density_estimate = aug.distribution_modifier(X_test, __bandwidth=bandwidth)
-            pdf_train_v2 = density_estimate.evaluate(aug.distribution_normalization(X_train))
+            density, density_estimate = aug.distribution_modifier(X_test_non_pca, __bandwidth=bandwidth)
+            pdf_train_v2 = density_estimate.evaluate(aug.distribution_normalization(X_train_non_pca))
             utility.save_density_with_bandwidth(out_path, pdf_train_v2, "{:.4f}".format(test_year))
 
             if args.Normalization == 'norm-1':
@@ -324,10 +307,10 @@ if __name__ == '__main__':
             all_years_auc.append(current_auc_original)
             # prediction result evaluation
             gbm_aug = GBM.GBM()
-            gbm_aug.train((X_train, y_train), weight)
-            y_test_prob_aug = gbm_aug.classifier_machine.predict_proba(X_test,
+            gbm_aug.train((X_train_non_pca, y_train_non_pca), weight)
+            y_test_prob_aug = gbm_aug.classifier_machine.predict_proba(X_test_non_pca,
                                                                        num_iteration=gbm_aug.classifier_machine.best_iteration_)
-            current_aug_auc = metrics.roc_auc_score(y_test, y_test_prob_aug[:, 1])
+            current_aug_auc = metrics.roc_auc_score(y_test_non_pca, y_test_prob_aug[:, 1])
             aug_auc.append(current_aug_auc)
 
             # predict_clf = clf.predict(X_test)
@@ -338,13 +321,13 @@ if __name__ == '__main__':
             # score = clf.score(X_test, y_test)
             # all_years_score.append(score)
 
-            selected_test_loan_numbers.append(X_test.shape[0])
-            selected_train_loan_numbers.append(X_train.shape[0])
+            selected_test_loan_numbers.append(X_test_non_pca.shape[0])
+            selected_train_loan_numbers.append(X_train_non_pca.shape[0])
 
-            x_default_test = X_test[y_test == 1]
-            y_default_test = y_test[y_test == 1]
+            x_default_test = X_test_non_pca[y_test_non_pca == 1]
+            y_default_test = y_test_non_pca[y_test_non_pca == 1]
             default_number = len(y_default_test)
-            y_default_train = y_train[y_train == 1]
+            y_default_train = y_train_non_pca[y_train_non_pca == 1]
             selected_train_default_numbers.append(len(y_default_train))
             selected_test_default_numbers.append(default_number)
             bandwidth_dict.append(bandwidth)

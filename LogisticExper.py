@@ -20,9 +20,11 @@ import GBM
 import utility
 from contextlib import closing
 import gc
+from model.LogisticClassifier import LRClassifier
+from scipy.stats import ks_2samp
 
-exper_name = 'naive-kde-bandwidth-0.3-to-0.511-step=0.001-nondefault-select-ratio=0.01-2006-2009-v4-non-random-GBDT-random-data-run-2-'
-engine = create_engine('postgresql://postgres:postgres@10.182.20.32:28888', echo=True)
+exper_name = 'Native-kde-bandwidth-0.1-to-1.5-step=0.05-nondefault-select-ratio-0.01-exper-lightgbm-2006-2009-v4-non-random-data-non-random-model-run0'
+engine = create_engine('postgresql://postgres:postgres@10.182.20.32:28888', echo=True, future=True)
 num_processor = 32
 
 train_year = 2006
@@ -32,7 +34,8 @@ train_ratio = 0.8
 with open('config/RiskModel.json', 'r') as f:
     risk_dict = json.load(f)
 
-
+with open('config/random.json', 'r') as f:
+    random_dict = json.load(f)
 
 result = {'selected number of test defaults': [],
           'selected number of test loans': [],
@@ -41,6 +44,8 @@ result = {'selected number of test defaults': [],
 
           'all year AUC': [],
           'augmentation AUC': [],
+          'ks': [],
+          'ks aug': [],
           'bandwidth': []
           }
 
@@ -85,13 +90,14 @@ def db_class_to_array(loans_data):
     return loans_data_array
 
 
+
 def preprocessing(loans_data_array):
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(**random_dict)
 
     non_default_loans = loans_data_array[loans_data_array[:, 19] == False]
     default_loans = loans_data_array[loans_data_array[:, 19] == True]
     random_non_default_index = rng.choice(len(non_default_loans),
-                                          int(len(non_default_loans) * risk_dict['non_default_loans_select_ratio_train']))
+                                          int(len(non_default_loans) * risk_dict['non_default_loans_select_ratio']))
     random_non_default = non_default_loans[random_non_default_index]
     balanced_loans = np.concatenate((default_loans, random_non_default))
     rng.shuffle(balanced_loans)
@@ -112,7 +118,6 @@ def preprocessing(loans_data_array):
 
 def evaluate(model, test_x, test_y):
     auc = metrics.roc_auc_score(test_y, model.predict_proba(test_x)[:, 1])
-
     return auc
 
 
@@ -152,7 +157,9 @@ if __name__ == '__main__':
     selected_train_default_numbers = []
     aug_auc = []
     bandwidth_dict = []
-    dens_out_path = 'output/augmentation-exper/bandwidth-exper/' + datetime.datetime.now(
+    ks_values_base = []
+    ks_values_aug = []
+    dens_out_path = 'output/augmentation-exper/logis-expers/' + datetime.datetime.now(
         tz=pytz.timezone('Asia/Shanghai')).strftime(
         "%Y-%m-%d-%H-%M-%S") + '/'
     os.mkdir(dens_out_path)
@@ -161,6 +168,7 @@ if __name__ == '__main__':
     parser.add_argument("-n", "--Normalization", help="Weight Normalization Approaches")
     args = parser.parse_args()
 
+    # pca_machine= PCA(n_components=)
     with Session(engine) as session:
         train_loans = get_loan_by_year(session, train_year)
         training_year_loans_array = db_class_to_array(train_loans)
@@ -168,7 +176,8 @@ if __name__ == '__main__':
         test_loans = get_loan_by_year(session, test_year)
         testing_year_loans_array = db_class_to_array(test_loans)
 
-        for bandwidth in np.arange(0.3, 0.602, 0.002):
+
+        for bandwidth in np.arange(0.1,1.55,0.05):
 
             gc.collect()
             X_train, y_train = preprocessing(training_year_loans_array)
@@ -185,26 +194,27 @@ if __name__ == '__main__':
             else:
                 if args.Normalization == 'norm-small':
                     weight = pdf_train_v2 / np.sum(pdf_train_v2)
-            print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
-                "%Y-%m-%d %H:%M:%S") + " Modeling start")
-            gbm_aug = GBM.GBM()
-            gbm = GBM.GBM()
-            gbm_aug.train((X_train, y_train), weight)
-            gbm.train((X_train, y_train))
+            print("Modeling start")
+            classifier_aug = LRClassifier()
+            classifier = LRClassifier()
+            classifier_aug.train(X_train, y_train, weight)
+            classifier.train(X_train, y_train)
             # prediction result evaluation
-            y_test_prob_aug = gbm_aug.classifier_machine.predict_proba(X_test,
-                                                                       num_iteration=gbm_aug.classifier_machine.best_iteration_)
+            y_test_prob_aug = classifier_aug.predict_proba(X_test)
             current_aug_auc = metrics.roc_auc_score(y_test, y_test_prob_aug[:, 1])
             aug_auc.append(current_aug_auc)
+            current_ks_aug = ks_2samp(y_test_prob_aug[:, 0], y_test_prob_aug[:, 1])
+            ks_values_aug.append(current_ks_aug)
 
 
-            y_test_prob_original = gbm.classifier_machine.predict_proba(X_test,
-                                                                        num_iteration=gbm.classifier_machine.best_iteration_)
+            y_test_prob_original = classifier.predict_proba(X_test)
             current_auc_original = metrics.roc_auc_score(y_test, y_test_prob_original[:, 1])
             all_years_auc.append(current_auc_original)
+            current_ks = ks_2samp(y_test_prob_original[:, 0], y_test_prob_original[:, 1])
+            ks_values_base.append(current_ks)
+
             print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(
                 "%Y-%m-%d %H:%M:%S") + "Model Evaluated for bandwidth " + str(bandwidth))
-
 
 
             selected_test_loan_numbers.append(X_test.shape[0])
@@ -215,24 +225,25 @@ if __name__ == '__main__':
             default_number = len(y_default_test)
             y_default_train = y_train[y_train == 1]
             selected_train_default_numbers.append(len(y_default_train))
+
             selected_test_default_numbers.append(default_number)
             bandwidth_dict.append(bandwidth)
 
     finalize_session(session)
     if args.Normalization == 'norm-1':
-        stored_file_name = dens_out_path + exper_name + 'normalization-1' + '.exper.auc.json'
+        stored_file_name = dens_out_path + exper_name + 'norm-1' + '.exper.auc.json'
     else:
         if args.Normalization == 'norm-small':
-            stored_file_name = dens_out_path + exper_name + 'normalization-small' + '.exper.auc.json'
+            stored_file_name = dens_out_path + exper_name + 'norm-small' + '.exper.auc.json'
     with open(stored_file_name, 'w+') as f:
-        # result = {'all year scores': all_years_score, 'default all years score': default_years_score,
-        #           'number of defaults': default_numbers, 'all year AUC': all_years_auc}
         result['selected number of test defaults'] = selected_test_default_numbers
         result['selected number of test loans'] = selected_test_loan_numbers
         result['selected number of train defaults'] = selected_train_default_numbers
         result['selected number of train loans'] = selected_train_loan_numbers
         result['all year AUC'] = all_years_auc
         result['augmentation AUC'] = aug_auc
+        result['ks'] = ks_values_base
+        result['ks aug'] = ks_values_aug
         result['bandwidth'] = bandwidth_dict
         json.dump(result, f)
         print(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).strftime(

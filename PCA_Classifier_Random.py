@@ -70,22 +70,6 @@ def get_loan_by_year(session, year):
     return query_result
 
 
-"""
-Input: X and Y for the whole data set
-Output: (x train, y train), (x test, y test)
-"""
-
-
-#
-# def loans_split(input_loans_x, input_loans_y):
-#     data_size = len(input_loans_x)
-#     is_defaults = np.vectorize(int)(input_loans_y)
-#     train_size = int(data_size * train_ratio)
-#     x_train = input_loans_x[:train_size]
-#     y_train = is_defaults[:train_size]
-#     x_test = input_loans_x[train_size:]
-#     y_test = is_defaults[train_size:]
-#     return (x_train, y_train), (x_test, y_test)
 
 
 def pca_dim_reduce(input_data, num_components):
@@ -108,11 +92,7 @@ def db_class_to_array(loans_data):
 
 
 def preprocessing_non_pca(loans_data_array, select_ratio):
-    # rng = np.random.default_rng(
-    #     int(precessing_count * PREPROCESSING_BIAS+ count * TIME_STEP + INIT_DATETIME))
-    rng = np.random.default_rng(
-        int(datetime.datetime.now(tz=pytz.timezone('Asia/Shanghai')).timestamp() - start_time) + random_dict['seed'])
-    # rng.shuffle(loans_data_array)
+    rng = np.random.default_rng()
     non_default_loans = loans_data_array[loans_data_array[:, 19] == False]
     default_loans = loans_data_array[loans_data_array[:, 19] == True]
     random_non_default_index = rng.choice(len(non_default_loans),
@@ -124,7 +104,6 @@ def preprocessing_non_pca(loans_data_array, select_ratio):
     X = balanced_loans[:, :19]
     Y = balanced_loans[:, 19].astype('int')
     encoded_x = pre.encode(X)
-    # TODO: conform if the classifier could be year dependent
     non_missed_credit_score_data = encoded_x[encoded_x[:, 0] != 999]
     missed_x_credit_factors = encoded_x[encoded_x[:, 0] == 999][:, 1:]
     if len(missed_x_credit_factors) > 0:
@@ -138,10 +117,7 @@ def preprocessing_non_pca(loans_data_array, select_ratio):
 
 
 def preprocessing_train(loans_data_array):
-    # rng = np.random.default_rng(
-    #     int(precessing_count * PREPROCESSING_BIAS+ count * TIME_STEP + INIT_DATETIME))
-    rng = np.random.default_rng(
-        TIME_STEP * count + PREPROCESSING_BIAS * precessing_count + random_dict['seed'])
+    rng = np.random.default_rng()
     non_default_loans = loans_data_array[loans_data_array[:, 19] == False]
     default_loans = loans_data_array[loans_data_array[:, 19] == True]
     random_non_default_index = rng.choice(len(non_default_loans),
@@ -154,7 +130,6 @@ def preprocessing_train(loans_data_array):
     X = balanced_loans[:, :19]
     Y = balanced_loans[:, 19].astype('int')
     encoded_x = pre.encode(X)
-    # TODO: conform if the classifier could be year dependent
     non_missed_credit_score_data = encoded_x[encoded_x[:, 0] != 999]
     missed_x_credit_factors = encoded_x[encoded_x[:, 0] == 999][:, 1:]
     if len(missed_x_credit_factors) > 0:
@@ -171,9 +146,7 @@ def preprocessing_train(loans_data_array):
 
 
 def preprocessing_test(loans_data_array, pca_transformer):
-
-    rng = np.random.default_rng(TIME_STEP * count + PREPROCESSING_BIAS * precessing_count + int(random_dict['seed']))
-    # rng = np.random.default_rng()
+    rng = np.random.default_rng()
     non_default_loans = loans_data_array[loans_data_array[:, 19] == False]
     default_loans = loans_data_array[loans_data_array[:, 19] == True]
     random_non_default_index = rng.choice(len(non_default_loans),
@@ -183,13 +156,10 @@ def preprocessing_test(loans_data_array, pca_transformer):
     random_non_default = non_default_loans[random_non_default_index]
     balanced_loans = np.concatenate((default_loans, random_non_default))
 
-    # balanced_loans = loans_data_array
-
     rng.shuffle(balanced_loans)
     X = balanced_loans[:, :19]
     Y = balanced_loans[:, 19].astype('int')
     encoded_x = pre.encode(X)
-    # TODO: conform if the classifier could be year dependent
     non_missed_credit_score_data = encoded_x[encoded_x[:, 0] != 999]
     missed_x_credit_factors = encoded_x[encoded_x[:, 0] == 999][:, 1:]
     if len(missed_x_credit_factors) > 0:
@@ -207,9 +177,6 @@ def preprocessing_test(loans_data_array, pca_transformer):
 
 def evaluate(model, test_x, test_y):
     auc = metrics.roc_auc_score(test_y, model.predict_proba(test_x)[:, 1])
-    # TODO: conform that all type of y is considered, the following commented code would warn only one type of y is provided
-    # fpr, tpr, thresholds = metrics.roc_curve(test_y, model.predict(test_x), pos_label=2)
-    # metrics.auc(fpr, tpr)
     return auc
 
 
